@@ -6,13 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"golang.org/x/net/html"
 )
@@ -21,14 +18,13 @@ import (
 var config struct {
 	url   string
 	depth int
-	dump  bool
 }
 
 // SiteMap is a site map.
 var SiteMap = struct {
 	sync.Mutex
-	Map map[string]interface{}
-}{Map: make(map[string]interface{})}
+	Map map[string]PageMap
+}{Map: make(map[string]PageMap)}
 
 // Crawl request options. Depth
 // is used as a decrementing counter,
@@ -50,7 +46,6 @@ type PageMap struct {
 func init() {
 	flag.StringVar(&config.url, "url", "", "Target URL")
 	flag.IntVar(&config.depth, "depth", 1, "Recursive crawl depth")
-	flag.BoolVar(&config.dump, "dump", false, "Dump map to file")
 	flag.Parse()
 
 	if config.url == "" {
@@ -76,20 +71,6 @@ func main() {
 
         siteMapJson, _ := json.MarshalIndent(siteMap, "", "  ")
         fmt.Printf("%s\n", siteMapJson)
-
-        // If the dump flag was set, write the json
-        // output to a file.
-        if config.dump {
-                siteMapJsonDump, _ := json.Marshal(siteMap)
-                siteMapJsonDump = append(siteMapJsonDump, 10)
-                domain, _ := url.Parse(config.url)
-                fileName := fmt.Sprintf("%s-%d.json", domain.Host, time.Now().Unix())
-                err := ioutil.WriteFile(fileName, siteMapJsonDump, 0644)
-                if err != nil {
-                        fmt.Println(err)
-                        os.Exit(1)
-                }
-        }
 }
 
 // crawl takes a URL, fetches the page, parses the page HTML,
@@ -97,7 +78,7 @@ func main() {
 // to mapAssetsAndLinks(). This returns a PageMap{} that is
 // then populated in the final SiteMap.Map map with the URL
 // as the map key.
-func crawl(request *CrawlRequest) map[string]interface{} {
+func crawl(request *CrawlRequest) map[string]PageMap {
 	// Break if we've recursed to the max depth.
 	if request.Depth <= 0 {
 		return SiteMap.Map
@@ -120,13 +101,8 @@ func crawl(request *CrawlRequest) map[string]interface{} {
 	}
 	defer resp.Body.Close()
 
-	// If we get a non 200, keep the link in the map (e.g. if it's a bad link).
-	// For example, if we passed a non-existent url to crawl(),
-	// we would get: { "http://grey-boundary.io/derp": "404 Not Found"}
+	// Skip non 200.
 	if resp.Status != "200 OK" {
-		SiteMap.Lock()
-		SiteMap.Map[request.Url] = resp.Status
-		SiteMap.Unlock()
 		return SiteMap.Map
 	}
 
